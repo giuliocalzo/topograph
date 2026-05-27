@@ -5,10 +5,11 @@
 global:
   provider:
     # name: "aws", "oci", "gcp", "nebius", "netq", "infiniband-k8s", "dra" or "test"
-    name: aws
+    name: infiniband-k8s
     params:
       nodeSelector:
         slurmCluster: my-cluster
+      useGpuCliqueLabel: true
   engine:
     name: slinky
     params:
@@ -20,10 +21,9 @@ global:
           app.kubernetes.io/component: compute
       plugin: topology/block
       blockSizes: [4]
-      # useGpuCliqueLabel: true
+      useGpuCliqueLabel: true
       topologyConfigPath: topology.conf
       topologyConfigmapName: slurm-config
-      useDynamicNodes: false
 
 nodeSelector:
   dedicated: user-workload
@@ -39,3 +39,29 @@ node-observer:
       podSelector:
         matchLabels:
           app.kubernetes.io/component: compute
+
+node-data-broker:
+  image:
+    repository: ghcr.io/nvidia/topograph/ib
+    pullPolicy: IfNotPresent
+    tag: main
+  initc:
+    enabled: true
+  verbosity: 4
+  securityContext:
+    privileged: true
+  nodeSelector:
+    node.dgxc.nvidia.com/has-gpu: "true"
+  volumeMounts:
+  - name: sys-class-volume
+    mountPath: /sys/class
+  volumes:
+  - name: sys-class-volume
+    hostPath:
+      path: /sys/class
+      type: Directory
+  tolerations:
+  - key: "nvidia.com/gpu"
+    operator: "Equal"
+    value: "present"
+    effect: "NoSchedule"
