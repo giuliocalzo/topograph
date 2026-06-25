@@ -291,9 +291,11 @@ echo "== subchart node-data-broker: enabled=false =="
 out=$(helm "${helm_common[@]}" --set node-data-broker.enabled=false)
 assert_output_not_contains "${out}" "# Source: topograph/charts/node-data-broker/" "node-data-broker.enabled=false should not render node-data-broker manifests"
 
-echo "== subchart node-data-broker: initc.enabled=false =="
-out=$(helm "${helm_common[@]}" --set node-data-broker.initc.enabled=false)
-assert_output_not_contains "${out}" "init-node-labels" "node-data-broker.initc.enabled=false should omit init container"
+echo "== subchart node-data-broker: runs node-data-broker-initc as the main container =="
+out=$(helm "${helm_common[@]}")
+assert_output_not_contains "${out}" "init-node-labels" "node-data-broker should no longer render an init container"
+assert_output_contains "${out}" "/usr/local/bin/node-data-broker-initc" "node-data-broker main container should run node-data-broker-initc"
+assert_output_contains "${out}" "path: /healthz" "node-data-broker should expose a /healthz probe"
 
 echo "== subchart node-data-broker: configMapMounts =="
 out=$(helm "${helm_common[@]}" \

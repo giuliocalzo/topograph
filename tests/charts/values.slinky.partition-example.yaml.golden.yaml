@@ -253,8 +253,10 @@ spec:
       serviceAccountName: chart-ci-node-data-broker
       securityContext:
         {}
-      initContainers:
-        - name: init-node-labels
+      containers:
+        - name: node-data-broker
+          securityContext:
+            {}
           image: "ghcr.io/nvidia/topograph:v0.4.0"
           imagePullPolicy: IfNotPresent
           command:
@@ -262,22 +264,24 @@ spec:
           args:
             - --provider=aws
             - -v=3
+            - --port=8080
           env:
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-      containers:
-        - name: node-data-broker
-          securityContext:
-            {}
-          image: "curlimages/curl:8.13.0"
-          imagePullPolicy: IfNotPresent
-          command:
-            
-            - tail
-            - -f
-            - /dev/null
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
           resources:
             limits:
               cpu: 100m
@@ -318,19 +322,6 @@ spec:
       serviceAccountName: chart-ci-node-observer
       securityContext:
         {}
-      initContainers:
-        - name: wait
-          image: "curlimages/curl:8.13.0"
-          imagePullPolicy: IfNotPresent
-          command:
-            - sh
-          args:
-            - -c
-            - |
-              until curl -sf "http://chart-ci.topograph.svc.cluster.local:49021/healthz" ; do
-                echo "Waiting for topograph to start ..."
-                sleep 2
-              done
       containers:
         - name: node-observer
           securityContext:

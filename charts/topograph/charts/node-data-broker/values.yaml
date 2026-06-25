@@ -3,26 +3,21 @@
 # Declare variables to be passed into your templates.
 
 image:
-  repository: curlimages/curl
+  repository: ghcr.io/nvidia/topograph
   pullPolicy: IfNotPresent
-  tag: 8.13.0
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
 
 enabled: true
 
-command:
-  - tail
-  - -f
-  - /dev/null
+# Port the node-data-broker serves its /healthz endpoint on after applying
+# node annotations.
+port: 8080
 
-initc:
-  enabled: true
-  image:
-    repository: ghcr.io/nvidia/topograph
-    pullPolicy: IfNotPresent
-    # Overrides the image tag whose default is the chart appVersion.
-    tag: ""
-  extraArgs:
-  #  - key=val
+# Extra key=value parameters passed to node-data-broker-initc via --set
+# (e.g. gpu-operator-namespace / device-plugin-daemonset for infiniband-k8s).
+extraArgs: []
+#  - key=val
 
 imagePullSecrets: []
 nameOverride: ""
@@ -63,8 +58,8 @@ resources:
     cpu: 100m
     memory: 128Mi
 
-# Optional ConfigMaps rendered by the chart and mounted into both the
-# node-data-broker container and init container. Set subPath for file mounts;
+# Optional ConfigMaps rendered by the chart and mounted into the
+# node-data-broker container. Set subPath for file mounts;
 # omit it to mount the whole ConfigMap as a directory.
 configMapMounts: []
 # name is used as a Kubernetes resource and volume suffix; keep it DNS-label-safe.

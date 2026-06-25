@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
@@ -40,13 +45,21 @@ import (
 	"github.com/NVIDIA/topograph/pkg/providers/oci"
 )
 
+const (
+	defaultPort       = 8080
+	readHeaderTimeout = 5 * time.Second
+	shutdownTimeout   = 5 * time.Second
+)
+
 func main() {
 	var provider string
 	var ver bool
 	var sets []string
+	var port int
 	pflag.StringVar(&provider, "provider", "", "API provider")
 	pflag.BoolVar(&ver, "version", false, "show the version")
 	pflag.StringArrayVar(&sets, "set", []string{}, "extra key=value parameters")
+	pflag.IntVar(&port, "port", defaultPort, "port for the health HTTP server")
 
 	klog.InitFlags(nil)
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
@@ -58,13 +71,26 @@ func main() {
 		os.Exit(0)
 	}
 
-	if err := mainInternal(provider, sets); err != nil {
+	if err := mainInternal(provider, sets, port); err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
-func mainInternal(provider string, sets []string) error {
+func mainInternal(provider string, sets []string, port int) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := applyNodeAnnotations(ctx, provider, sets); err != nil {
+		return err
+	}
+
+	// The node annotations are applied once at startup; keep the DaemonSet pod
+	// Running by serving a health endpoint until the pod is terminated.
+	return serveHealth(ctx, port)
+}
+
+func applyNodeAnnotations(ctx context.Context, provider string, sets []string) error {
 	klog.InfoS("Starting node-data-broker", "provider", provider, "extras", sets)
 
 	extras, err := getExtras(sets)
@@ -82,7 +108,6 @@ func mainInternal(provider string, sets []string) error {
 		return fmt.Errorf("failed to create clientset: %v", err)
 	}
 
-	ctx := context.TODO()
 	nodeName := os.Getenv("NODE_NAME")
 
 	annotations, err := getAnnotations(ctx, clientset, config, provider, nodeName, extras)
@@ -104,6 +129,44 @@ func mainInternal(provider string, sets []string) error {
 	}
 
 	return nil
+}
+
+// serveHealth runs a minimal HTTP server exposing /healthz so the DaemonSet
+// pod stays Running after node annotations have been applied. It blocks until
+// the context is cancelled (SIGTERM/SIGINT), then shuts down gracefully.
+func serveHealth(ctx context.Context, port int) error {
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           healthHandler(),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		klog.Infof("Serving health endpoint on %s", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		klog.Info("Shutting down health endpoint")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
+	case err := <-errCh:
+		return err
+	}
+}
+
+func healthHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	return mux
 }
 
 func getExtras(sets []string) (map[string]string, error) {
